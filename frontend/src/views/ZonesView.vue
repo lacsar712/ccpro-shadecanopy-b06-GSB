@@ -14,7 +14,21 @@ const form = reactive({
   status: 'idle',
 })
 
+const blackouts = ref([])
+const blackoutError = ref('')
+const blackoutFilterZoneId = ref('')
+const blackoutForm = reactive({
+  zoneId: '',
+  date: '',
+  reason: '',
+})
+
 const statusLabel = { idle: '空闲', growing: '在种', fallow: '休耕' }
+
+// 东八区自然日（禁灌日口径，与后端归日一致）
+function cnToday() {
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+}
 
 function resetForm() {
   editingId.value = null
@@ -42,6 +56,42 @@ async function load() {
   } catch {
     error.value = '加载分区失败'
   }
+}
+
+async function loadBlackouts() {
+  blackoutError.value = ''
+  try {
+    const params = {}
+    if (blackoutFilterZoneId.value) params.zoneId = blackoutFilterZoneId.value
+    const { data } = await api.get('/blackouts/', { params })
+    blackouts.value = data.results || data
+  } catch {
+    blackoutError.value = '加载禁灌日历失败'
+  }
+}
+
+async function saveBlackout() {
+  blackoutError.value = ''
+  try {
+    await api.post('/blackouts/', {
+      zoneId: Number(blackoutForm.zoneId),
+      date: blackoutForm.date,
+      reason: blackoutForm.reason,
+    })
+    blackoutForm.date = cnToday()
+    blackoutForm.reason = ''
+    await loadBlackouts()
+    await load()
+  } catch (e) {
+    blackoutError.value = JSON.stringify(e.response?.data || '保存禁灌失败')
+  }
+}
+
+async function removeBlackout(id) {
+  if (!confirm('确认删除该禁灌记录？删除后当日立即放行新建轮灌。')) return
+  await api.delete(`/blackouts/${id}/`)
+  await loadBlackouts()
+  await load()
 }
 
 function edit(row) {
@@ -77,11 +127,15 @@ async function remove(id) {
   if (!confirm('确认删除该分区？')) return
   await api.delete(`/zones/${id}/`)
   await load()
+  await loadBlackouts()
 }
 
 onMounted(async () => {
   await loadGreenhouses()
   await load()
+  blackoutForm.zoneId = list.value[0]?.id || ''
+  blackoutForm.date = cnToday()
+  await loadBlackouts()
 })
 </script>
 
@@ -90,7 +144,7 @@ onMounted(async () => {
     <div class="page-head">
       <div>
         <h1>分区管理</h1>
-        <p>同温室 zoneCode 唯一；状态 idle / growing / fallow</p>
+        <p>同温室 zoneCode 唯一；状态 idle / growing / fallow；今日禁灌命中当日禁灌日历</p>
       </div>
       <div class="actions">
         <select v-model="filterGreenhouseId" @change="load">
@@ -136,6 +190,7 @@ onMounted(async () => {
             <th>编码</th>
             <th>作物</th>
             <th>状态</th>
+            <th>今日禁灌</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -146,10 +201,76 @@ onMounted(async () => {
             <td>{{ row.zoneCode }}</td>
             <td>{{ row.cropName || '—' }}</td>
             <td><span class="badge" :class="row.status">{{ statusLabel[row.status] || row.status }}</span></td>
+            <td>
+              <span v-if="row.todayBlackout" class="badge blackout">禁灌</span>
+              <span v-else style="color:var(--muted)">—</span>
+            </td>
             <td class="actions">
               <button class="btn ghost" @click="edit(row)">编辑</button>
               <button class="btn danger" @click="remove(row.id)">删除</button>
             </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="page-head" style="margin-bottom:12px">
+        <div>
+          <h3 style="margin:0">禁灌日历</h3>
+          <p style="margin:4px 0 0">命中禁灌日（东八区自然日）禁止新建轮灌；同区同日唯一；删除后立即放行</p>
+        </div>
+        <div class="actions">
+          <select v-model="blackoutFilterZoneId" @change="loadBlackouts">
+            <option value="">全部分区</option>
+            <option v-for="z in list" :key="z.id" :value="z.id">
+              {{ z.greenhouseName }} / {{ z.zoneCode }}
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          分区
+          <select v-model="blackoutForm.zoneId">
+            <option v-for="z in list" :key="z.id" :value="z.id">
+              {{ z.greenhouseName }} / {{ z.zoneCode }}
+            </option>
+          </select>
+        </label>
+        <label>禁灌日（东八区）<input v-model="blackoutForm.date" type="date" /></label>
+        <label>原因（去空白后至少 4 字）<input v-model="blackoutForm.reason" placeholder="如：主管道检修，全天停水" /></label>
+      </div>
+      <p v-if="blackoutError" class="error">{{ blackoutError }}</p>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" @click="saveBlackout">添加禁灌</button>
+      </div>
+
+      <table style="margin-top:16px">
+        <thead>
+          <tr>
+            <th>编号</th>
+            <th>温室/分区</th>
+            <th>禁灌日</th>
+            <th>原因</th>
+            <th>创建人</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in blackouts" :key="row.id">
+            <td>#{{ row.id }}</td>
+            <td>{{ row.greenhouseName }} / {{ row.zoneCode }}</td>
+            <td>{{ row.date }}</td>
+            <td>{{ row.reason }}</td>
+            <td>{{ row.createdBy }}</td>
+            <td class="actions">
+              <button class="btn danger" @click="removeBlackout(row.id)">删除</button>
+            </td>
+          </tr>
+          <tr v-if="!blackouts.length">
+            <td colspan="6" style="color:var(--muted)">暂无禁灌记录</td>
           </tr>
         </tbody>
       </table>

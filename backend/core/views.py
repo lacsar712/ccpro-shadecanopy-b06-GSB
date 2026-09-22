@@ -1,16 +1,18 @@
 from datetime import timedelta
 
-from django.db.models import Count
+from django.db.models import Count, Exists, OuterRef
 from django.utils import timezone
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from .blackouts import blackouts_on, find_blackout, local_day, today
+from .models import ClimateLog, Greenhouse, IrrigationBlackout, IrrigationCycle, Zone
 from .serializers import (
     ClimateLogSerializer,
     GreenhouseSerializer,
+    IrrigationBlackoutSerializer,
     IrrigationCycleSerializer,
     ZoneSerializer,
 )
@@ -25,7 +27,12 @@ class ZoneViewSet(viewsets.ModelViewSet):
     serializer_class = ZoneSerializer
 
     def get_queryset(self):
-        qs = Zone.objects.select_related("greenhouse").all()
+        # todayBlackout 标记与拦轮灌读同一查询（blackouts_on）
+        qs = Zone.objects.select_related("greenhouse").annotate(
+            today_blackout=Exists(
+                blackouts_on(today()).filter(zone=OuterRef("pk"))
+            )
+        )
         greenhouse_id = self.request.query_params.get("greenhouseId")
         status = self.request.query_params.get("status")
         if greenhouse_id:
@@ -58,6 +65,45 @@ class IrrigationCycleViewSet(viewsets.ModelViewSet):
         if status:
             qs = qs.filter(status=status)
         return qs
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        zone = serializer.validated_data["zone"]
+        # 归日：按开始时刻的东八区自然日查禁灌黑名单
+        day = local_day(serializer.validated_data["start_at"])
+        blackout = find_blackout(zone.id, day)
+        if blackout is not None:
+            return Response(
+                {
+                    "detail": f"该分区 {day.isoformat()} 为禁灌日（{blackout.reason}），禁止新建轮灌",
+                    "blackoutId": blackout.id,
+                    "zoneId": zone.id,
+                    "date": day.isoformat(),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data, status=status.HTTP_201_CREATED, headers=headers
+        )
+
+
+class IrrigationBlackoutViewSet(viewsets.ModelViewSet):
+    serializer_class = IrrigationBlackoutSerializer
+
+    def get_queryset(self):
+        qs = IrrigationBlackout.objects.select_related(
+            "zone", "zone__greenhouse", "created_by"
+        ).all()
+        zone_id = self.request.query_params.get("zoneId")
+        if zone_id:
+            qs = qs.filter(zone_id=zone_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
 
 @api_view(["GET"])

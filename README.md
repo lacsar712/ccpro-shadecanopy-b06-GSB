@@ -49,7 +49,19 @@ docker compose down
 3. **Zone**：greenhouseId / zoneCode / cropName / status(`idle|growing|fallow`)；同温室 zoneCode 唯一
 4. **ClimateLog**：zoneId / recordedAt / tempC / humidityPct / parUmol / co2Ppm；**humidityPct ∈ [20, 100]**
 5. **IrrigationCycle**：zoneId / startAt / durationMin / waterLiters / status(`scheduled|running|done|skipped`)
-6. **Dashboard**：温室数、growing 分区数、近 24h 气候日志数、今日 scheduled 轮灌数 → `GET /api/dashboard/`
+6. **IrrigationBlackout（禁灌日历）**：zoneId / date / reason / createdBy；命中禁灌日的分区禁止新建轮灌
+7. **Dashboard**：温室数、growing 分区数、近 24h 气候日志数、今日 scheduled 轮灌数 → `GET /api/dashboard/`
+
+## 禁灌日历：归日与拦截
+
+- **禁灌字段**：所属分区（zoneId）、禁灌日（date）、原因（reason）、创建人（createdBy，取当前登录用户）。
+- **归日**：禁灌日一律按**东八区（Asia/Shanghai）自然日**归算。新建轮灌时，后端把 `startAt` 时刻换算到东八区取日期（`core/blackouts.py: local_day()`），与该分区的禁灌日历比对。
+- **校验**：同一分区同一禁灌日唯一（`uniq_blackout_zone_date`）；原因去空白后至少 4 字。
+- **拦截**：`POST /api/irrigation-cycles/` 命中禁灌日即返回 **409**，响应正文带 `blackoutId`（禁灌编号）、`zoneId`、`date`。仅拦截新建，已有轮灌的编辑/删除不受影响。
+- **放行**：删除禁灌记录后立即放行——拦截每次实时查库，无缓存。
+- **同一查询**：分区列表每行的 `todayBlackout`（今日是否禁灌，为真表示当天在黑名单）与拦轮灌共用 `core/blackouts.py: blackouts_on()` 这同一查询，两处结果必然一致。
+- **过滤**：禁灌列表支持按分区过滤 `GET /api/blackouts/?zoneId=`；分区管理页可加、删禁灌记录。
+- **种子**：`seed_data` 每次执行都会为一区（首个分区 A-01）写入**当天**（东八区）禁灌记录（幂等），便于直接演示拦截。
 
 ## API 一览
 
@@ -62,6 +74,7 @@ docker compose down
 | CRUD | `/api/zones/?greenhouseId=&status=` |
 | CRUD | `/api/climate-logs/?zoneId=` |
 | CRUD | `/api/irrigation-cycles/?zoneId=&status=` |
+| CRUD | `/api/blackouts/?zoneId=` |
 | GET | `/api/dashboard/` |
 
 字段对外使用 camelCase（如 `areaM2`、`zoneCode`、`humidityPct`）。

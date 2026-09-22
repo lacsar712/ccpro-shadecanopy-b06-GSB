@@ -82,7 +82,12 @@ async function save() {
     resetForm()
     await load()
   } catch (e) {
-    error.value = JSON.stringify(e.response?.data || '保存失败')
+    const data = e.response?.data
+    if (e.response?.status === 409 && data?.blackoutId) {
+      error.value = `命中禁灌日历：${data.date} 该分区禁灌（禁灌编号 #${data.blackoutId}），禁止新建轮灌`
+    } else {
+      error.value = JSON.stringify(data || '保存失败')
+    }
   }
 }
 

@@ -305,6 +305,11 @@ textarea:focus {
   background: #edd9d4;
   color: var(--danger);
 }
+.badge.blackout {
+  background: #edd9d4;
+  color: var(--danger);
+  font-weight: 600;
+}
 
 .error {
   color: var(--danger);

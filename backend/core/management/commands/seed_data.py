@@ -5,7 +5,14 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from core.models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from core.blackouts import today
+from core.models import (
+    ClimateLog,
+    Greenhouse,
+    IrrigationBlackout,
+    IrrigationCycle,
+    Zone,
+)
 
 User = get_user_model()
 
@@ -44,8 +51,27 @@ class Command(BaseCommand):
 
         if Greenhouse.objects.exists():
             self.stdout.write("温室数据已存在，跳过业务种子写入。")
-            return
+        else:
+            self._seed_business()
 
+        # 禁灌日历种子：一区（首个分区）当天（东八区自然日）禁灌，幂等可重复执行
+        z1 = Zone.objects.order_by("id").first()
+        if z1:
+            blackout, created = IrrigationBlackout.objects.get_or_create(
+                zone=z1,
+                date=today(),
+                defaults={
+                    "reason": "主管道检修，全天暂停灌溉",
+                    "created_by": admin,
+                },
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"一区（{z1.zone_code}）今日禁灌 {'created' if created else 'exists'}：#{blackout.id} {blackout.date}"
+                )
+            )
+
+    def _seed_business(self):
         g1 = Greenhouse.objects.create(
             name="东坡一号棚",
             location="东区 A 排",
