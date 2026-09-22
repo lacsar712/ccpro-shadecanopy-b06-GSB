@@ -82,7 +82,12 @@ async function save() {
     resetForm()
     await load()
   } catch (e) {
-    error.value = JSON.stringify(e.response?.data || '保存失败')
+    const data = e.response?.data
+    if (e.response?.status === 409 && data?.blackoutId) {
+      error.value = `禁灌拦截：${data.blackoutDate} 为该分区禁灌日（禁灌编号 #${data.blackoutId}），原因：${data.reason}。如需灌溉请先删除对应黑名单。`
+    } else {
+      error.value = JSON.stringify(data || '保存失败')
+    }
   }
 }
 

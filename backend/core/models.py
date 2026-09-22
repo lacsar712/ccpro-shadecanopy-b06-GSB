@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -100,3 +101,33 @@ class IrrigationCycle(models.Model):
 
     def __str__(self):
         return f"Irrig@{self.zone_id} {self.start_at} ({self.status})"
+
+
+class IrrigationBlackout(models.Model):
+    """分区禁灌日历：命中 blackout_date（东八区自然日）当天禁止新建轮灌。"""
+
+    zone = models.ForeignKey(
+        Zone, on_delete=models.CASCADE, related_name="irrigation_blackouts"
+    )
+    blackout_date = models.DateField()
+    reason = models.CharField(max_length=200)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="irrigation_blackouts",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-blackout_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["zone", "blackout_date"],
+                name="uniq_blackout_date_per_zone",
+            )
+        ]
+
+    def __str__(self):
+        return f"Blackout@{self.zone_id} {self.blackout_date}"

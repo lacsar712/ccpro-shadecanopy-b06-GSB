@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ClimateLogViewSet,
     GreenhouseViewSet,
+    IrrigationBlackoutViewSet,
     IrrigationCycleViewSet,
     ZoneViewSet,
     dashboard_stats,
@@ -14,6 +15,9 @@ router.register("greenhouses", GreenhouseViewSet, basename="greenhouse")
 router.register("zones", ZoneViewSet, basename="zone")
 router.register("climate-logs", ClimateLogViewSet, basename="climate-log")
 router.register("irrigation-cycles", IrrigationCycleViewSet, basename="irrigation-cycle")
+router.register(
+    "irrigation-blackouts", IrrigationBlackoutViewSet, basename="irrigation-blackout"
+)
 
 urlpatterns = [
     path("dashboard/", dashboard_stats, name="dashboard"),

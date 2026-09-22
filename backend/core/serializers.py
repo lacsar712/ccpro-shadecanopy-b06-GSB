@@ -1,6 +1,12 @@
 from rest_framework import serializers
 
-from .models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from .models import (
+    ClimateLog,
+    Greenhouse,
+    IrrigationBlackout,
+    IrrigationCycle,
+    Zone,
+)
 
 
 class GreenhouseSerializer(serializers.ModelSerializer):
@@ -36,6 +42,7 @@ class ZoneSerializer(serializers.ModelSerializer):
     zoneCode = serializers.CharField(source="zone_code")
     cropName = serializers.CharField(source="crop_name", allow_blank=True, required=False)
     greenhouseName = serializers.CharField(source="greenhouse.name", read_only=True)
+    blackoutToday = serializers.SerializerMethodField()
 
     class Meta:
         model = Zone
@@ -46,10 +53,21 @@ class ZoneSerializer(serializers.ModelSerializer):
             "zoneCode",
             "cropName",
             "status",
+            "blackoutToday",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "greenhouseName", "created_at", "updated_at")
+        read_only_fields = (
+            "id",
+            "greenhouseName",
+            "blackoutToday",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_blackoutToday(self, obj):
+        # 由 ZoneViewSet 用 services.blackout_qs 注解；与轮灌拦截读同一查询
+        return bool(getattr(obj, "blackout_today", False))
 
     def validate(self, attrs):
         greenhouse = attrs.get("greenhouse") or getattr(self.instance, "greenhouse", None)
@@ -142,3 +160,54 @@ class IrrigationCycleSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+
+class IrrigationBlackoutSerializer(serializers.ModelSerializer):
+    zoneId = serializers.PrimaryKeyRelatedField(
+        source="zone", queryset=Zone.objects.all()
+    )
+    blackoutDate = serializers.DateField(source="blackout_date")
+    zoneCode = serializers.CharField(source="zone.zone_code", read_only=True)
+    greenhouseName = serializers.CharField(
+        source="zone.greenhouse.name", read_only=True
+    )
+    createdBy = serializers.CharField(source="created_by.username", read_only=True)
+
+    class Meta:
+        model = IrrigationBlackout
+        fields = (
+            "id",
+            "zoneId",
+            "zoneCode",
+            "greenhouseName",
+            "blackoutDate",
+            "reason",
+            "createdBy",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "zoneCode",
+            "greenhouseName",
+            "createdBy",
+            "created_at",
+        )
+
+    def validate_reason(self, value):
+        reason = (value or "").strip()
+        if len(reason) < 4:
+            raise serializers.ValidationError("原因去空白后至少 4 字")
+        return reason
+
+    def validate(self, attrs):
+        zone = attrs.get("zone") or getattr(self.instance, "zone", None)
+        day = attrs.get("blackout_date") or getattr(self.instance, "blackout_date", None)
+        if zone and day:
+            qs = IrrigationBlackout.objects.filter(zone=zone, blackout_date=day)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"blackoutDate": "同一分区同一禁灌日只能有一条黑名单"}
+                )
+        return attrs

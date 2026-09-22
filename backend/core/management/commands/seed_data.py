@@ -5,7 +5,14 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from core.models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from core.models import (
+    ClimateLog,
+    Greenhouse,
+    IrrigationBlackout,
+    IrrigationCycle,
+    Zone,
+)
+from core.services import today_local
 
 User = get_user_model()
 
@@ -162,9 +169,20 @@ class Command(BaseCommand):
             ]
         )
 
+        # 一区（A-01）当天（东八区自然日）禁灌，用于演示轮灌拦截
+        IrrigationBlackout.objects.get_or_create(
+            zone=z1,
+            blackout_date=today_local(),
+            defaults={
+                "reason": "主管道检修，全天暂停灌溉",
+                "created_by": admin,
+            },
+        )
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"种子完成：温室 {Greenhouse.objects.count()}，分区 {Zone.objects.count()}，"
-                f"气候 {ClimateLog.objects.count()}，轮灌 {IrrigationCycle.objects.count()}"
+                f"气候 {ClimateLog.objects.count()}，轮灌 {IrrigationCycle.objects.count()}，"
+                f"禁灌 {IrrigationBlackout.objects.count()}"
             )
         )
